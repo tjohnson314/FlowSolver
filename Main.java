@@ -47,7 +47,7 @@ public class Main
      */
     public static void main(String[] args)
     {
-        String fileName = "input9.txt";
+        String fileName = "input12.txt";
         Board board = ReadFile(fileName);
         board.Solve();
     }

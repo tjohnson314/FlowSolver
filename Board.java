@@ -7,6 +7,7 @@
 package flowsolver;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 
 /**
  *
@@ -58,9 +59,7 @@ public class Board {
         for(int i = 0; i < size; i++)
         {
             for(int j = 0; j < size; j++)
-            {
-                System.out.print(boardArr[i*size + j] + " ");
-            }
+                System.out.format("%4d", boardArr[i*size + j]);
             
             System.out.println();
         }
@@ -97,13 +96,42 @@ public class Board {
         }
     }
     
+    public ArrayList<Integer> adjEmpty(int board[], int loc)
+    {
+        ArrayList<Integer> adjSquares = new ArrayList<Integer>();
+        if(loc >= size && board[loc - size] == 0) //Move up
+            adjSquares.add(loc - size);
+        
+        if(loc < size*(size - 1) && board[loc + size] == 0) //Move down
+            adjSquares.add(loc + size);
+        
+        if(loc%size > 0 && board[loc - 1] == 0) //Move left
+            adjSquares.add(loc - 1);
+        
+        if(loc%size < size - 1 && board[loc + 1] == 0) //Move right
+            adjSquares.add(loc + 1);
+        
+        return adjSquares;
+    }
+    
+    public boolean isAdjacent(int loc1, int loc2)
+    {
+        int row1 = loc1/size;
+        int row2 = loc2/size;
+        int col1 = loc1%size;
+        int col2 = loc2%size;
+        int dist = Math.abs(row1 - row2) + Math.abs(col1 - col2);
+        
+        return(dist == 1);
+    }
+    
     public void Solve()
     {
         Preprocess();
         System.out.println("Processed board: ");
         PrintBoard();
         int[][][] paths = this.FindPaths();
-        //PrintPaths(paths);
+        PrintPaths(paths);
         
         int[] numPathsColor = new int[numColors]; //The number of paths for each color.
         System.out.print("Path choices: ");
@@ -119,12 +147,11 @@ public class Board {
             DisplaySolution(pathInds, paths); //Displays the board with the solution discovered.
         else
             System.out.println("Error! No solution found.");
-        
     }
     
     //We first preprocess the board, to identify the squares near the start
-    //and end points for each color that must be assigned. Then it wil shift
-    //the new start and end points.
+    //and end points for each color that can be determined with certainty.
+    //Then we shift the new start and end points.
     public void Preprocess()
     {
         boolean changeMade = true;
@@ -190,7 +217,9 @@ public class Board {
         else return false;
     }
     
-    //Checks whether we can extend a path
+    //Checks whether we can extend a path. This is true whenever that square is
+    //currently empty, or when the new edge connects the two ends of our path
+    //for the current color.
     public boolean checkExtend(int newLoc, int currColor, boolean start)
     {
         if(boardArr[newLoc] == 0)
@@ -206,6 +235,7 @@ public class Board {
         return false;
     }
     
+    //maxAvail gives the number of empty squares each path is allowed to use.
     public int[][][] FindPaths()
     {
         int paths[][][] = new int[numColors][][];
@@ -220,18 +250,32 @@ public class Board {
             //There will be many paths for the first color, since these are not checked.
             //But by the time we choose one of those paths, most will have been
             //eliminated, since we work backwards through the list of colors.
+            System.out.println("Color " + Integer.toString(i + 1) + " : " + Integer.toString(nextPaths.length) + " paths found!");
             nextPaths = ValidPaths(nextPaths, paths, i);
+            System.out.println("Color " + Integer.toString(i + 1) + " : " + Integer.toString(nextPaths.length) + " valid paths found!");
             paths[i] = nextPaths;
         }
         
         return paths;
     }
     
+    //Recursively finds the possible paths for our current color from start to
+    //to finish in a partially filled board.
     public int[][] FindColoredPaths(int color, int currLoc, int end, int[] board)
     {   
+        /*System.out.println("\nFinding paths for color " + color);
+        for(int i = 0; i < size*size; i++)
+        {
+            System.out.print(board[i] + " ");
+            if(i%size == size - 1)
+                System.out.println();
+        }
+        System.out.println();*/
+        
         int[][] paths;
         if(currLoc == end)
         {
+            //System.out.println("New path found!");
             board[currLoc] = color;
             paths = new int[1][];
             paths[0] = Arrays.copyOf(board,size*size);
@@ -265,14 +309,296 @@ public class Board {
                 if(nextLoc >= 0 && nextBoard[nextLoc] == 0)
                 {
                     nextBoard[nextLoc] = color;
-                    nextPaths = FindColoredPaths(color, nextLoc, end, nextBoard);
-                    paths = MergeArrays(paths, nextPaths);
+                    colorStarts[color - 1] = nextLoc; //Decrease by 1 to get index
+                    if(BoardCheck(nextBoard, color, nextLoc))
+                    {
+                        nextPaths = FindColoredPaths(color, nextLoc, end, nextBoard);
+                        paths = MergeArrays(paths, nextPaths);
+                    }
                     nextBoard[nextLoc] = 0;
-                }
+                    colorStarts[color - 1] = currLoc;
+                }                
             }
-
+            if(paths.length > 10000)
+                System.out.println("Color " + color + " : " + paths.length + " paths found");
             return paths;
         }
+    }
+    
+    public boolean BoardCheck(int[] board, int currColor, int currLoc)
+    {
+        /*for(int i = 0; i < size*size; i++)
+            System.out.print(Integer.toString(board[i]) + " ");
+        System.out.println();*/
+        
+        //We check that the maximum flow is equal to the number of colors.
+        Graph g = FlowGraph(board, colorStarts, colorEnds, currColor);
+        //g.Print();
+        int flow = g.calcFlow(size*size, size*size + 1);
+        //System.out.println("The max flow is " + Integer.toString(flow));
+        if(flow != numColors)
+        {
+            //System.out.println("The max flow is only " + Integer.toString(flow));
+            return false;
+        }
+        
+        //We check that there is a path for each color.
+        int start, end;
+        boolean[] searched;
+        for(int i = 0; i < numColors; i++)
+        {
+            searched = new boolean[size*size];
+            if(i != currColor - 1)
+                start = colorStarts[i];
+            else
+                start = currLoc;
+            end = colorEnds[i];
+            
+            //Our search method requires setting the end square to be 0, so that
+            //we can move to it. But if we are checking the current color, this
+            //will already have been done.
+            if(i != currColor - 1)
+                board[end] = 0;
+            //System.out.println("Color, (start, end): " + (i + 1) + ", (" + start + ", " + end + ")");
+            if(!Connected(board, searched, start, end))
+                return false;
+            
+            if(i != currColor - 1)
+                board[end] = i + 1;
+            //System.out.println(check);
+        }
+        
+        //We also check that there are no orphaned empty squares.
+        boolean[] goal = new boolean[size*size];
+        for(int i = 0; i < size*size; i++)
+            goal[i] = false;
+        for(int i = 0; i < numColors; i++)
+        {
+            assert(colorStarts[i] == currLoc);
+            if(i != currColor - 1)
+                goal[colorStarts[i]] = true;
+            else
+                goal[currLoc] = true;
+            goal[colorEnds[i]] = true;
+        }
+        
+        searched = new boolean[size*size];
+        for(int i = 0; i < size*size; i++)
+            searched[i] = false;
+        for(int i = 0; i < size*size; i++)
+        {
+            if(board[i] == 0 && !searched[i] && !ConnectedZeros(board, i, searched, goal))
+                return false;
+        }
+        
+        //Finally, we check that there are no vertices of degree 1, since any
+        //path that goes into them will then get stuck.
+        boolean[] endpoints = new boolean[size*size];
+        for(int i = 0; i < size*size; i++)
+            endpoints[i] = false;
+        for(int i = 0; i < numColors; i++)
+        {
+            if(i != currColor - 1)
+            {
+                if(colorStarts[i] != colorEnds[i])
+                {
+                    endpoints[colorStarts[i]] = true;
+                    endpoints[colorEnds[i]] = true;
+                }
+            }
+            else
+            {
+                if(currLoc != colorEnds[i])
+                {
+                    endpoints[currLoc] = true;
+                    endpoints[colorEnds[i]] = true;
+                }
+            }
+            
+        }
+        for(int i = 0; i < size*size; i++)
+        {
+            if(board[i] == 0 && numEmpty(i, board, endpoints) == 1 && i != colorEnds[currColor - 1])
+            {
+                //System.out.println("Degree 1 square: " + Integer.toString(i));
+                return false;
+            }
+            else if(board[i] == 0 && numEmpty(i, board, endpoints) == 0)
+                System.out.println("THIS SHOULD NEVER HAPPEN!!");
+        }
+        
+        return true;
+    }
+    
+    public Graph FlowGraph(int[] board, int[] colorStarts, int[] colorEnds, int currColor)
+    {
+        Graph g = new Graph(size*size + 2);
+        /*for(int i = 0; i < numColors; i++)
+        {
+            System.out.print("Color " + Integer.toString(i + 1) + ": ");
+            System.out.println(Integer.toString(colorStarts[i]) + ", " + Integer.toString(colorEnds[i]));
+        }*/
+        
+        
+        //Vertex size*size is our sink, and vertex (size*size + 1) is our source
+        for(int i = 0; i < numColors; i++)
+        {
+            g.addEdge(size*size, colorStarts[i]);
+            g.addEdge(colorEnds[i], size*size + 1);
+            //System.out.println(colorEnds[i]);
+        }
+        
+        //Add edges from colorStarts to adjacent empty squares, and from
+        //empty squares to colorEnds
+        ArrayList<Integer> empty = new ArrayList<Integer>();
+        for(int i = 0; i < numColors; i++)
+        {
+            empty = adjEmpty(board, colorStarts[i]);
+            for(int j = 0; j < empty.size(); j++)
+                g.addEdge(colorStarts[i], empty.get(j));
+        }
+        
+        for(int i = 0; i < numColors; i++)
+        {
+            if(i != currColor - 1)
+            {
+                empty = adjEmpty(board, colorEnds[i]);
+                for(int j = 0; j < empty.size(); j++)
+                    g.addEdge(empty.get(j), colorEnds[i]);
+            }
+        }
+        
+        //Connect adjacent starts and ends. If they are our current color,
+        //this will already be done.
+        for(int i = 0; i < numColors; i++)
+        {
+            if(i != currColor && isAdjacent(colorStarts[i], colorEnds[i]))
+                g.addEdge(colorStarts[i], colorEnds[i]);
+        }
+        
+        for(int i = 0; i < size*size; i++)
+        {
+            if(board[i] == 0)
+            {
+                empty = adjEmpty(board, i);
+                for(int j = 0; j < empty.size(); j++)
+                {
+                    g.addEdge(i, empty.get(j));
+                }
+            }
+        }
+        return g;
+    }
+    
+    public boolean Connected(int[] board, boolean[] searched, int startLoc, int endLoc)
+    {
+        //System.out.println(startLoc);
+        if(startLoc == endLoc)
+            return true;
+        else
+        {
+            int[] newLocs = {-1, -1, -1, -1};
+            if(startLoc >= size && board[startLoc - size] == 0 && !searched[startLoc - size])
+                newLocs[0] = startLoc - size;
+            
+            if(startLoc < size*(size - 1) && board[startLoc + size] == 0 && !searched[startLoc + size])
+                newLocs[1] = startLoc + size;
+            
+            if(startLoc%size > 0 && board[startLoc - 1] == 0 && !searched[startLoc - 1])
+                newLocs[2] = startLoc - 1;
+            
+            if(startLoc%size < size - 1 && board[startLoc + 1] == 0 && !searched[startLoc + 1])
+                newLocs[3] = startLoc + 1;
+            
+            searched[startLoc] = true;
+            for(int i = 0; i < 4; i++)
+            {
+                if(newLocs[i] >= 0 && Connected(board, searched, newLocs[i], endLoc))
+                    return true;
+            }
+            return false;
+        }
+    }
+    
+    public boolean ConnectedZeros(int[] board, int startLoc, boolean[] searched, boolean[] goal)
+    {
+        //System.out.println(startLoc);
+        int[] newLocs = {-1, -1, -1, -1};
+        if(startLoc >= size)
+        {
+            if(goal[startLoc - size])
+            {
+                goal[startLoc] = true;
+                return true;
+            }
+            else if(board[startLoc - size] == 0 && !searched[startLoc - size])
+                newLocs[0] = startLoc - size;
+        }
+
+        if(startLoc < size*(size - 1))
+        {
+            if(goal[startLoc + size])
+            {
+                goal[startLoc] = true;
+                return true;
+            }
+            else if(board[startLoc + size] == 0 && !searched[startLoc + size])
+                newLocs[1] = startLoc + size;
+        }
+
+        if(startLoc%size > 0)
+        {
+            if(goal[startLoc - 1])
+            {
+                goal[startLoc] = true;
+                return true;
+            }
+            else if(board[startLoc - 1] == 0 && !searched[startLoc - 1])
+                newLocs[2] = startLoc - 1;
+        }
+
+        if(startLoc%size < size - 1)
+        {
+            if(goal[startLoc + 1])
+            {
+                goal[startLoc] = true;
+                return true;
+            }
+            else if(board[startLoc + 1] == 0 && !searched[startLoc + 1])
+                newLocs[3] = startLoc + 1;
+        }
+
+        searched[startLoc] = true;
+        for(int i = 0; i < 4; i++)
+        {
+            if(newLocs[i] >= 0 && ConnectedZeros(board, newLocs[i], searched, goal))
+            {
+                goal[newLocs[i]] = true;
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public int numEmpty(int loc, int[] board, boolean[] endpoints)
+    {
+        int empty = 0;
+        int[] newLocs = {-1, -1, -1, -1};
+        if(loc >= size)
+            newLocs[0] = loc - size;
+        if(loc < size*(size - 1))
+            newLocs[1] = loc + size;
+        if(loc%size > 0)
+            newLocs[2] = loc - 1;
+        if(loc%size < size - 1)
+            newLocs[3] = loc + 1;
+        
+        for(int i = 0; i < 4; i++)
+        {
+            if(newLocs[i] >= 0 && (board[newLocs[i]] == 0 || endpoints[newLocs[i]]))
+                empty++;
+        }
+        return empty;
     }
     
     public int[][] ValidPaths(int[][] currPaths, int[][][] allPaths, int currColor)
@@ -587,7 +913,7 @@ public class Board {
         for(int i = 0; i < size; i++)
         {
             for(int j = 0; j < size; j++)
-                System.out.print(filledBoard[i*size + j] + " ");
+                System.out.format("%4d", filledBoard[i*size + j]);
             System.out.println();
         }
     }
